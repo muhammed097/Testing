@@ -153,7 +153,13 @@
 
             async createConnection() {
                 this.connection = new RTCPeerConnection({
-                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                    iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' },
+                    { urls: 'stun:stun3.l.google.com:19302' },
+                    { urls: 'stun:stun4.l.google.com:19302' }
+                ]
                 });
 
                 this.dataChannel = this.connection.createDataChannel('fileTransfer');
@@ -174,6 +180,16 @@
                 this.connection = new RTCPeerConnection({
                     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
                 });
+
+                // Add connection state monitoring
+                this.connection.oniceconnectionstatechange = () => {
+                    const state = this.connection.iceConnectionState;
+                    if (state === 'failed' || state === 'disconnected') {
+                        this.updateStatus(`Connection failed. Make sure both devices are online. State: ${state}`);
+                    } else if (state === 'connected') {
+                        this.updateStatus('Connection established successfully!');
+                    }
+                };
 
                 this.connection.ondatachannel = (event) => {
                     this.dataChannel = event.channel;
