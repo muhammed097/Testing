@@ -35,6 +35,9 @@
 
         .section {
             margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
         }
 
         .btn {
@@ -46,6 +49,8 @@
             cursor: pointer;
             font-size: 14px;
             transition: background-color 0.3s;
+            width: 100%;
+            margin-bottom: 10px;
         }
 
         .btn:hover {
@@ -73,6 +78,10 @@
 
         .file-input {
             margin-bottom: 10px;
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
         }
 
         .status {
@@ -81,6 +90,11 @@
             border-radius: 4px;
             background-color: #e8f0fe;
             color: #1a73e8;
+        }
+
+        .error {
+            background-color: #fee8e8;
+            color: #e81a1a;
         }
 
         .progress-bar {
@@ -102,6 +116,12 @@
         .hidden {
             display: none;
         }
+        
+        .debug-info {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
@@ -109,21 +129,20 @@
         <h1>P2P File Sharing</h1>
         
         <div class="section">
-            <button id="createBtn" class="btn">Create Sharing Link</button>
+            <h3>Step 1: Create or Join</h3>
+            <button id="createBtn" class="btn">Create New Room</button>
             <div id="shareIdContainer" class="share-id hidden">
                 <input type="text" id="shareId" readonly>
-                <button id="copyBtn" class="btn">Copy</button>
+                <button id="copyBtn" class="btn" style="width: auto">Copy</button>
             </div>
-        </div>
-
-        <div class="section">
             <div class="share-id">
-                <input type="text" id="joinId" placeholder="Enter share ID to join">
-                <button id="joinBtn" class="btn">Join</button>
+                <input type="text" id="joinId" placeholder="Enter room code to join">
+                <button id="joinBtn" class="btn" style="width: auto">Join</button>
             </div>
         </div>
 
         <div class="section">
+            <h3>Step 2: Select & Send File</h3>
             <input type="file" id="fileInput" class="file-input">
             <button id="sendBtn" class="btn" disabled>Send File</button>
         </div>
@@ -132,6 +151,7 @@
         <div id="progressBarContainer" class="progress-bar hidden">
             <div id="progress" class="progress"></div>
         </div>
+        <div id="debugInfo" class="debug-info"></div>
     </div>
 
     <script>
@@ -140,77 +160,145 @@
                 this.connection = null;
                 this.dataChannel = null;
                 this.file = null;
+                this.isInitiator = false;
                 this.setupEventListeners();
             }
 
             setupEventListeners() {
-                document.getElementById('createBtn').addEventListener('click', () => this.createConnection());
-                document.getElementById('joinBtn').addEventListener('click', () => this.joinConnection());
+                document.getElementById('createBtn').addEventListener('click', () => this.createRoom());
+                document.getElementById('joinBtn').addEventListener('click', () => this.joinRoom());
                 document.getElementById('copyBtn').addEventListener('click', () => this.copyShareId());
                 document.getElementById('fileInput').addEventListener('change', (e) => this.handleFileSelect(e));
                 document.getElementById('sendBtn').addEventListener('click', () => this.sendFile());
             }
 
-            async createConnection() {
-                this.connection = new RTCPeerConnection({
-                    iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' },
-                    { urls: 'stun:stun2.l.google.com:19302' },
-                    { urls: 'stun:stun3.l.google.com:19302' },
-                    { urls: 'stun:stun4.l.google.com:19302' }
-                ]
-                });
-
-                this.dataChannel = this.connection.createDataChannel('fileTransfer');
-                this.setupDataChannel();
-
-                const offer = await this.connection.createOffer();
-                await this.connection.setLocalDescription(offer);
-
-                const shareId = btoa(JSON.stringify(offer)).slice(0, 12);
-                this.showShareId(shareId);
-                this.updateStatus('Waiting for peer to join...');
+            updateDebugInfo(info) {
+                const debugDiv = document.getElementById('debugInfo');
+                debugDiv.textContent = `Debug: ${info}`;
             }
 
-            async joinConnection() {
-                const joinId = document.getElementById('joinId').value;
-                if (!joinId) return;
+            async createRoom() {
+                try {
+                    this.isInitiator = true;
+                    this.updateStatus('Creating room...');
+                    
+                    this.connection = new RTCPeerConnection({
+                        iceServers: [
+                            { urls: 'stun:stun.l.google.com:19302' },
+                            { urls: 'stun:stun1.l.google.com:19302' },
+                            { urls: 'stun:stun2.l.google.com:19302' },
+                            { urls: 'stun:stun3.l.google.com:19302' },
+                            { urls: 'stun:stun4.l.google.com:19302' }
+                        ]
+                    });
 
-                this.connection = new RTCPeerConnection({
-                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-                });
+                    this.setupConnectionHandlers();
 
-                // Add connection state monitoring
-                this.connection.oniceconnectionstatechange = () => {
-                    const state = this.connection.iceConnectionState;
-                    if (state === 'failed' || state === 'disconnected') {
-                        this.updateStatus(`Connection failed. Make sure both devices are online. State: ${state}`);
-                    } else if (state === 'connected') {
-                        this.updateStatus('Connection established successfully!');
+                    this.dataChannel = this.connection.createDataChannel('fileTransfer');
+                    this.setupDataChannel();
+
+                    const offer = await this.connection.createOffer();
+                    await this.connection.setLocalDescription(offer);
+                    
+                    // Generate room code from offer
+                    const roomCode = btoa(JSON.stringify({
+                        type: offer.type,
+                        sdp: offer.sdp
+                    })).slice(0, 10);
+                    
+                    this.showShareId(roomCode);
+                    this.updateStatus('Waiting for peer to join...');
+                    this.updateDebugInfo('Room created, waiting for peer');
+                } catch (error) {
+                    this.updateStatus('Failed to create room: ' + error.message, true);
+                    this.updateDebugInfo('Room creation error: ' + error.message);
+                }
+            }
+
+            async joinRoom() {
+                try {
+                    const roomCode = document.getElementById('joinId').value;
+                    if (!roomCode) {
+                        this.updateStatus('Please enter a room code', true);
+                        return;
+                    }
+
+                    this.updateStatus('Joining room...');
+                    this.isInitiator = false;
+
+                    this.connection = new RTCPeerConnection({
+                        iceServers: [
+                            { urls: 'stun:stun.l.google.com:19302' },
+                            { urls: 'stun:stun1.l.google.com:19302' },
+                            { urls: 'stun:stun2.l.google.com:19302' },
+                            { urls: 'stun:stun3.l.google.com:19302' },
+                            { urls: 'stun:stun4.l.google.com:19302' }
+                        ]
+                    });
+
+                    this.setupConnectionHandlers();
+
+                    this.connection.ondatachannel = (event) => {
+                        this.dataChannel = event.channel;
+                        this.setupDataChannel();
+                    };
+
+                    // Decode and set remote description
+                    const offerData = JSON.parse(atob(roomCode));
+                    await this.connection.setRemoteDescription(new RTCSessionDescription(offerData));
+
+                    const answer = await this.connection.createAnswer();
+                    await this.connection.setLocalDescription(answer);
+
+                    this.updateStatus('Connecting to peer...');
+                    this.updateDebugInfo('Joining room, created answer');
+                } catch (error) {
+                    this.updateStatus('Failed to join room: ' + error.message, true);
+                    this.updateDebugInfo('Room join error: ' + error.message);
+                }
+            }
+
+            setupConnectionHandlers() {
+                this.connection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        this.updateDebugInfo('ICE candidate found');
                     }
                 };
 
-                this.connection.ondatachannel = (event) => {
-                    this.dataChannel = event.channel;
-                    this.setupDataChannel();
+                this.connection.oniceconnectionstatechange = () => {
+                    const state = this.connection.iceConnectionState;
+                    this.updateDebugInfo('ICE state: ' + state);
+                    
+                    switch (state) {
+                        case 'connected':
+                            this.updateStatus('Connected to peer!');
+                            break;
+                        case 'disconnected':
+                            this.updateStatus('Peer disconnected', true);
+                            break;
+                        case 'failed':
+                            this.updateStatus('Connection failed. Please try again', true);
+                            break;
+                    }
                 };
 
-                try {
-                    const offer = JSON.parse(atob(joinId));
-                    await this.connection.setRemoteDescription(offer);
-                    const answer = await this.connection.createAnswer();
-                    await this.connection.setLocalDescription(answer);
-                    this.updateStatus('Connected! Ready to receive files.');
-                } catch (error) {
-                    this.updateStatus('Failed to connect. Please try again.');
-                }
+                this.connection.onconnectionstatechange = () => {
+                    this.updateDebugInfo('Connection state: ' + this.connection.connectionState);
+                };
             }
 
             setupDataChannel() {
                 this.dataChannel.onopen = () => {
-                    this.updateStatus('Connected! Ready to transfer files.');
-                    document.getElementById('sendBtn').disabled = false;
+                    this.updateStatus('Data channel opened - ready to transfer files!');
+                    document.getElementById('sendBtn').disabled = !this.file;
+                };
+
+                this.dataChannel.onclose = () => {
+                    this.updateStatus('Data channel closed');
+                };
+
+                this.dataChannel.onerror = (error) => {
+                    this.updateStatus('Data channel error: ' + error.message, true);
                 };
 
                 this.dataChannel.onmessage = async (event) => {
@@ -235,27 +323,34 @@
                 this.file = event.target.files[0];
                 if (this.file) {
                     this.updateStatus(`Selected file: ${this.file.name}`);
-                    document.getElementById('sendBtn').disabled = !this.dataChannel;
+                    document.getElementById('sendBtn').disabled = !this.dataChannel || this.dataChannel.readyState !== 'open';
                 }
             }
 
             async sendFile() {
                 if (!this.file || !this.dataChannel) return;
 
-                const metadata = {
-                    fileName: this.file.name,
-                    fileType: this.file.type,
-                    fileSize: this.file.size
-                };
-                this.dataChannel.send(JSON.stringify(metadata));
+                try {
+                    const metadata = {
+                        fileName: this.file.name,
+                        fileType: this.file.type,
+                        fileSize: this.file.size
+                    };
+                    this.dataChannel.send(JSON.stringify(metadata));
 
-                const reader = new FileReader();
-                reader.onload = () => {
-                    this.dataChannel.send(reader.result);
-                    this.updateStatus('File sent successfully!');
-                    this.updateProgress(100);
-                };
-                reader.readAsArrayBuffer(this.file);
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        this.dataChannel.send(reader.result);
+                        this.updateStatus('File sent successfully!');
+                        this.updateProgress(100);
+                    };
+                    reader.onerror = (error) => {
+                        this.updateStatus('Error reading file: ' + error.message, true);
+                    };
+                    reader.readAsArrayBuffer(this.file);
+                } catch (error) {
+                    this.updateStatus('Error sending file: ' + error.message, true);
+                }
             }
 
             showShareId(shareId) {
@@ -269,13 +364,18 @@
                 const shareId = document.getElementById('shareId');
                 shareId.select();
                 document.execCommand('copy');
-                this.updateStatus('Share ID copied to clipboard!');
+                this.updateStatus('Room code copied to clipboard!');
             }
 
-            updateStatus(message) {
+            updateStatus(message, isError = false) {
                 const status = document.getElementById('status');
                 status.textContent = message;
                 status.classList.remove('hidden');
+                if (isError) {
+                    status.classList.add('error');
+                } else {
+                    status.classList.remove('error');
+                }
             }
 
             updateProgress(percent) {
