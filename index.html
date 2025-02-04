@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P File Sharing</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            padding: 20px;
+            background-color: #f0f2f5;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            text-align: center;
+            color: #1a73e8;
+            margin-bottom: 20px;
+        }
+
+        .section {
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            background-color: #1a73e8;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+
+        .btn:hover {
+            background-color: #1557b0;
+        }
+
+        .btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .share-id {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .share-id input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        .file-input {
+            margin-bottom: 10px;
+        }
+
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+            background-color: #e8f0fe;
+            color: #1a73e8;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f2f5;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .progress {
+            width: 0%;
+            height: 100%;
+            background-color: #1a73e8;
+            transition: width 0.3s;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>P2P File Sharing</h1>
+        
+        <div class="section">
+            <button id="createBtn" class="btn">Create Sharing Link</button>
+            <div id="shareIdContainer" class="share-id hidden">
+                <input type="text" id="shareId" readonly>
+                <button id="copyBtn" class="btn">Copy</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="share-id">
+                <input type="text" id="joinId" placeholder="Enter share ID to join">
+                <button id="joinBtn" class="btn">Join</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <input type="file" id="fileInput" class="file-input">
+            <button id="sendBtn" class="btn" disabled>Send File</button>
+        </div>
+
+        <div id="status" class="status hidden"></div>
+        <div id="progressBarContainer" class="progress-bar hidden">
+            <div id="progress" class="progress"></div>
+        </div>
+    </div>
+
+    <script>
+        class P2PFileShare {
+            constructor() {
+                this.connection = null;
+                this.dataChannel = null;
+                this.file = null;
+                this.setupEventListeners();
+            }
+
+            setupEventListeners() {
+                document.getElementById('createBtn').addEventListener('click', () => this.createConnection());
+                document.getElementById('joinBtn').addEventListener('click', () => this.joinConnection());
+                document.getElementById('copyBtn').addEventListener('click', () => this.copyShareId());
+                document.getElementById('fileInput').addEventListener('change', (e) => this.handleFileSelect(e));
+                document.getElementById('sendBtn').addEventListener('click', () => this.sendFile());
+            }
+
+            async createConnection() {
+                this.connection = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                this.dataChannel = this.connection.createDataChannel('fileTransfer');
+                this.setupDataChannel();
+
+                const offer = await this.connection.createOffer();
+                await this.connection.setLocalDescription(offer);
+
+                const shareId = btoa(JSON.stringify(offer)).slice(0, 12);
+                this.showShareId(shareId);
+                this.updateStatus('Waiting for peer to join...');
+            }
+
+            async joinConnection() {
+                const joinId = document.getElementById('joinId').value;
+                if (!joinId) return;
+
+                this.connection = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                this.connection.ondatachannel = (event) => {
+                    this.dataChannel = event.channel;
+                    this.setupDataChannel();
+                };
+
+                try {
+                    const offer = JSON.parse(atob(joinId));
+                    await this.connection.setRemoteDescription(offer);
+                    const answer = await this.connection.createAnswer();
+                    await this.connection.setLocalDescription(answer);
+                    this.updateStatus('Connected! Ready to receive files.');
+                } catch (error) {
+                    this.updateStatus('Failed to connect. Please try again.');
+                }
+            }
+
+            setupDataChannel() {
+                this.dataChannel.onopen = () => {
+                    this.updateStatus('Connected! Ready to transfer files.');
+                    document.getElementById('sendBtn').disabled = false;
+                };
+
+                this.dataChannel.onmessage = async (event) => {
+                    if (typeof event.data === 'string') {
+                        const metadata = JSON.parse(event.data);
+                        this.updateStatus(`Receiving ${metadata.fileName}...`);
+                    } else {
+                        const blob = new Blob([event.data]);
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = this.file ? this.file.name : 'received-file';
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        this.updateStatus('File received successfully!');
+                        this.updateProgress(0);
+                    }
+                };
+            }
+
+            handleFileSelect(event) {
+                this.file = event.target.files[0];
+                if (this.file) {
+                    this.updateStatus(`Selected file: ${this.file.name}`);
+                    document.getElementById('sendBtn').disabled = !this.dataChannel;
+                }
+            }
+
+            async sendFile() {
+                if (!this.file || !this.dataChannel) return;
+
+                const metadata = {
+                    fileName: this.file.name,
+                    fileType: this.file.type,
+                    fileSize: this.file.size
+                };
+                this.dataChannel.send(JSON.stringify(metadata));
+
+                const reader = new FileReader();
+                reader.onload = () => {
+                    this.dataChannel.send(reader.result);
+                    this.updateStatus('File sent successfully!');
+                    this.updateProgress(100);
+                };
+                reader.readAsArrayBuffer(this.file);
+            }
+
+            showShareId(shareId) {
+                const container = document.getElementById('shareIdContainer');
+                const input = document.getElementById('shareId');
+                container.classList.remove('hidden');
+                input.value = shareId;
+            }
+
+            copyShareId() {
+                const shareId = document.getElementById('shareId');
+                shareId.select();
+                document.execCommand('copy');
+                this.updateStatus('Share ID copied to clipboard!');
+            }
+
+            updateStatus(message) {
+                const status = document.getElementById('status');
+                status.textContent = message;
+                status.classList.remove('hidden');
+            }
+
+            updateProgress(percent) {
+                const progressBar = document.getElementById('progressBarContainer');
+                const progress = document.getElementById('progress');
+                progressBar.classList.remove('hidden');
+                progress.style.width = `${percent}%`;
+            }
+        }
+
+        // Initialize the application
+        const app = new P2PFileShare();
+    </script>
+</body>
+</html>
